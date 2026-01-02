@@ -1,3 +1,5 @@
+//We are using Half-open intervals to ensure that every point belongs to exactly one region, every split is clean, and no boundary cases need special handling.
+
 #pragma once
 
 #include "point.h"

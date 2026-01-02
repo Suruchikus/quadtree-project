@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -O3 -Wall -Iinclude
 
-SRC = src/modified_quadtree.cpp src/io.cpp experiments/experiments.cpp
+SRC = src/modified_quadtree.cpp src/quadtree.cpp src/io.cpp experiments/experiments.cpp
 OBJ = $(SRC:.cpp=.o)
 
 all: run_experiments
