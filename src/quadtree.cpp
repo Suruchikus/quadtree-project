@@ -1,465 +1,405 @@
 #include "quadtree.h"
+
 #include <cassert>
-#include <array>
-#include <cstdlib>
-#include <iostream>
 
+static constexpr size_t SUPER = 512;
 
-
-//Destructor, when tree is deleted this function will delete all childrent and free the space
-Node::~Node() {
-    for(int i=0;i<4;i++) {
-        delete child[i];
-        child[i]=nullptr;
-    }
+static inline uint32_t popcount_u64(uint64_t x) {
+    return (uint32_t)__builtin_popcountll(x);
 }
 
-//Constructor, basically initalizes
-QuadTree:: QuadTree (const Rect& world, int leaf_size):
-    world_(world), leaf_size_(leaf_size) {
-        root_ = nullptr;
-    }
-
-void QuadTree::debug_print_node(int level,
-                                const Rect& region,
-                                uint32_t start, uint32_t count,
-                                int mxA, int myA, const std::array<int,4>& cA, int scoreA,
-                                int mxB, int myB, const std::array<int,4>& cB, int scoreB,
-                                int mxChosen, int myChosen,
-                                uint8_t meta) const
+SingletonStopQuadTreeV2::SingletonStopQuadTreeV2(const Rect& world)
+    : world_(world)
 {
-    // Decode meta
-    const bool useHeavy = (meta & 0x1) != 0;
-    const int heavyQ = (meta >> 1) & 0x3;
-
-    // Indent by level (visual tree shape)
-    for (int i = 0; i < level; i++) std::cout << "  ";
-
-    std::cout << "L" << level
-              << " region=[" << region.xmin << "," << region.ymin
-              << " -> " << region.xmax << "," << region.ymax << ")"
-              << " slice=[" << start << "," << (start + count) << ")"
-              << " n=" << count
-              << "\n";
-
-    // Print A
-    for (int i = 0; i < level; i++) std::cout << "  ";
-    std::cout << "  A: (mx,my)=(" << mxA << "," << myA << ") "
-              << "counts=[NW " << cA[0] << ", NE " << cA[1]
-              << ", SW " << cA[2] << ", SE " << cA[3] << "] "
-              << "score=" << scoreA << "\n";
-
-    // Print B
-    for (int i = 0; i < level; i++) std::cout << "  ";
-    std::cout << "  B: (mx,my)=(" << mxB << "," << myB << ") "
-              << "counts=[NW " << cB[0] << ", NE " << cB[1]
-              << ", SW " << cB[2] << ", SE " << cB[3] << "] "
-              << "score=" << scoreB
-              << "  (heavyQ from A = " << heavyQ << ")"
-              << "\n";
-
-    // Print chosen
-    for (int i = 0; i < level; i++) std::cout << "  ";
-    std::cout << "  CHOSEN: (mx,my)=(" << mxChosen << "," << myChosen << ") "
-              << (useHeavy ? "[HEAVY]" : "[NORMAL]")
-              << "\n";
+    const int N = world_.xmax - world_.xmin;
+    int d = 0;
+    int t = N;
+    while (t > 1) { t >>= 1; d++; }
+    D_ = d;
 }
 
+size_t SingletonStopQuadTreeV2::bytes_S_levels() const {
+    size_t s = 0;
+    for (const auto& v : Slev_) s += v.capacity() * sizeof(uint64_t);
+    return s;
+}
+size_t SingletonStopQuadTreeV2::bytes_rankS_levels() const {
+    size_t s = 0;
+    for (const auto& v : rankSlev_) s += v.capacity() * sizeof(uint32_t);
+    return s;
+}
+size_t SingletonStopQuadTreeV2::bytes_P1_levels() const {
+    size_t s = 0;
+    for (const auto& v : P1lev_) s += v.capacity() * sizeof(uint64_t);
+    return s;
+}
 
-void QuadTree::geo_split(const Rect& r, int& mx, int & my){
+// ---------------- geometry ----------------
+void SingletonStopQuadTreeV2::geo_split(const Rect& r, int& mx, int& my) {
     mx = r.xmin + (r.xmax - r.xmin) / 2;
     my = r.ymin + (r.ymax - r.ymin) / 2;
 }
-
-int QuadTree::quadrant_of(int mx, int my, const Point& p){
-    // east if x >= mx, north if y >= my (half-open boundaries)
+int SingletonStopQuadTreeV2::quadrant_of(int mx, int my, const Point& p) {
     const bool east  = (p.x >= mx);
     const bool north = (p.y >= my);
-
-    // Quadrant indices:
-    // 0: NW (west, north)
-    // 1: NE (east, north)
-    // 2: SW (west, south)
-    // 3: SE (east, south)
-    if (!east && north) return 0; //NW
-    if (east && north) return 1; //NE
-    if(!east && !north) return 2; //SW
-    return 3;
+    if (!east && north) return 0; // NW
+    if ( east && north) return 1; // NE
+    if (!east && !north) return 2; // SW
+    return 3; // SE
 }
-
-Rect QuadTree::quadrant_rect(const Rect& r, int mx, int my, int q){
+Rect SingletonStopQuadTreeV2::quadrant_rect(const Rect& r, int mx, int my, int q) {
     Rect out = r;
-
     switch (q) {
-        case 0: // NW: [xmin, mx) x [my, ymax)
-            out.xmax = mx;
-            out.ymin = my;
-            break;
-        case 1: // NE: [mx, xmax) x [my, ymax)
-            out.xmin = mx;
-            out.ymin = my;
-            break;
-        case 2: // SW: [xmin, mx) x [ymin, my)
-            out.xmax = mx;
-            out.ymax = my;
-            break;
-        case 3: // SE: [mx, xmax) x [ymin, my)
-            out.xmin = mx;
-            out.ymax = my;
-            break;
-        default:
-            // Should never happen; return full region as fallback
-            break;
+        case 0: out.xmax = mx; out.ymin = my; break;
+        case 1: out.xmin = mx; out.ymin = my; break;
+        case 2: out.xmax = mx; out.ymax = my; break;
+        case 3: out.xmin = mx; out.ymax = my; break;
+        default: break;
     }
-
     return out;
-
 }
 
-int QuadTree::balance_score(const std::array<int,4>& counts, int n){
-    //This is the ideal score and we wanna calculate how far of is the number of points in each quadrant from the ideal
-    const int target = n/4;
-
-    int score = 0;
-    for(int i=0;i<4;i++){
-        score += std::abs(counts[i] - target);
-    }
-
-    return score;
+// ---------------- bits ----------------
+void SingletonStopQuadTreeV2::push_bit(std::vector<uint64_t>& bv, size_t& bits_used, bool b) {
+    const size_t word = bits_used >> 6;
+    const size_t bit  = bits_used & 63;
+    if (word >= bv.size()) bv.push_back(0ULL);
+    if (b) bv[word] |= (1ULL << bit);
+    bits_used++;
+}
+bool SingletonStopQuadTreeV2::get_bit(const std::vector<uint64_t>& bv, size_t pos) const {
+    const size_t word = pos >> 6;
+    const size_t bit  = pos & 63;
+    return (bv[word] >> bit) & 1ULL;
+}
+void SingletonStopQuadTreeV2::push_mask4(uint8_t mask4) {
+    for (int b = 0; b < 4; b++) push_bit(T_, T_bits_, ((mask4 >> b) & 1u) != 0);
+}
+uint8_t SingletonStopQuadTreeV2::get_mask4(size_t node_i) const {
+    const size_t base = 4 * node_i;
+    uint8_t m = 0;
+    m |= (uint8_t)get_bit(T_, base + 0) << 0;
+    m |= (uint8_t)get_bit(T_, base + 1) << 1;
+    m |= (uint8_t)get_bit(T_, base + 2) << 2;
+    m |= (uint8_t)get_bit(T_, base + 3) << 3;
+    return m;
 }
 
-void QuadTree::choose_split_and_encode(Node* node, const Rect& region, uint32_t start, uint32_t count, int& out_mx, int& out_my, std::array<int,4>& out_countsA, std::array<int,4>& out_countsB) const {
-    //First we try a normal quadtree geometric split
-    int mxA, myA;
-    geo_split(region, mxA, myA);
+// ---------------- rank ----------------
+uint32_t SingletonStopQuadTreeV2::rank1(const std::vector<uint64_t>& bv,
+                                       const std::vector<uint32_t>& sup,
+                                       size_t bits_used,
+                                       size_t pos) const
+{
+    if (pos == 0) return 0;
+    if (pos > bits_used) pos = bits_used;
 
-    //Count how many points will go in each quadrant with above split
-    out_countsA = {0,0,0,0};
-    for (uint32_t i=0; i< count;i++){
-        const Point& p = pts_[start + i];
-        int q = quadrant_of(mxA, myA, p);
-        out_countsA[q]++;
+    const size_t sb = pos / SUPER;
+    uint32_t res = sup[sb];
+
+    const size_t sb_start = sb * SUPER;
+    size_t cur = sb_start;
+
+    while (cur + 64 <= pos) {
+        const size_t w = cur >> 6;
+        res += popcount_u64(bv[w]);
+        cur += 64;
     }
-
-    //Look for the quadrant with the highest number of points
-    int heavyQ = 0;
-    for (int q=1; q<4; q++){
-        if (out_countsA[q]>out_countsA[heavyQ]) heavyQ=q;
+    if (cur < pos) {
+        const size_t w = cur >> 6;
+        const size_t rem = pos - cur;
+        const uint64_t mask = (rem == 64) ? ~0ULL : ((1ULL << rem) - 1ULL);
+        res += popcount_u64(bv[w] & mask);
     }
-
-    //Second we will compute the split based on heavy quadrant
-    Rect heavyRegion = quadrant_rect(region, mxA, myA, heavyQ);
-
-    int mxB,myB;
-    geo_split(heavyRegion,mxB,myB);
-
-    //Count distribution for second split strategy
-    out_countsB = {0,0,0,0};
-    for (uint32_t i = 0;i<count;i++){
-        const Point& p = pts_[start + i];
-        int q = quadrant_of(mxB,myB,p);
-        out_countsB[q]++;
-    }
-
-    //Find the balance score
-    const int n = static_cast<int> (count);
-    int scoreA = balance_score(out_countsA,n);
-    int scoreB = balance_score(out_countsB,n);
-
-    //Is the second split better?
-    bool useHeavy = (scoreB<scoreA);
-
-    //Encode the decision
-    uint8_t meta = 0;
-    if(useHeavy) {
-        meta |= 0x1; //bit0=1
-        meta |= (uint8_t(heavyQ)<< 1); //bits1-2=heavyQ
-        out_mx = mxB;
-        out_my = myB;
-    } else {
-        //if useHeavy = 0 it means we use normal split
-        out_mx = mxA;
-        out_my = myA;
-    }
-
-    node->meta = meta;
+    return res;
 }
 
-void QuadTree::chosen_split(const Rect& region, uint8_t meta, int& mx, int& my) {
-    // Split A: midpoint of region
-    int mxA, myA;
-    geo_split(region, mxA, myA);
+void SingletonStopQuadTreeV2::build_rank(const std::vector<uint64_t>& bv, size_t bits_used, std::vector<uint32_t>& out_sup) {
+    out_sup.clear();
+    const size_t num_super = (bits_used + SUPER - 1) / SUPER + 1;
+    out_sup.resize(num_super, 0);
 
-    const bool useHeavy = (meta & 0x1) != 0;
-    if (!useHeavy) {
-        mx = mxA;
-        my = myA;
-        return;
+    uint32_t running = 0;
+    for (size_t sb = 0; sb + 1 < num_super; sb++) {
+        out_sup[sb] = running;
+
+        const size_t sb_start = sb * SUPER;
+        const size_t sb_end = std::min(sb_start + SUPER, bits_used);
+
+        size_t p = sb_start;
+        while (p + 64 <= sb_end) {
+            const size_t w = p >> 6;
+            running += popcount_u64(bv[w]);
+            p += 64;
+        }
+        if (p < sb_end) {
+            const size_t w = p >> 6;
+            const size_t rem = sb_end - p;
+            const uint64_t mask = (rem == 64) ? ~0ULL : ((1ULL << rem) - 1ULL);
+            running += popcount_u64(bv[w] & mask);
+        }
+    }
+    out_sup[num_super - 1] = running;
+}
+
+// ---------------- payload ----------------
+void SingletonStopQuadTreeV2::push_bits(std::vector<uint64_t>& bv, size_t& bits_used, uint64_t value, int nbits) {
+    for (int i = 0; i < nbits; i++) push_bit(bv, bits_used, ((value >> i) & 1ULL) != 0);
+}
+uint64_t SingletonStopQuadTreeV2::get_bits(const std::vector<uint64_t>& bv, size_t bitpos, int nbits) const {
+    uint64_t v = 0;
+    for (int i = 0; i < nbits; i++) {
+        if (get_bit(bv, bitpos + (size_t)i)) v |= (1ULL << i);
+    }
+    return v;
+}
+
+void SingletonStopQuadTreeV2::ensure_level_storage(int depth) {
+    if ((int)Slev_.size() > depth) return;
+    const int need = depth + 1;
+    Slev_.resize(need);
+    Slev_bits_.resize(need, 0);
+    rankSlev_.resize(need);
+
+    P1lev_.resize(need);
+    P1lev_bits_.resize(need, 0);
+}
+
+void SingletonStopQuadTreeV2::push_singleton_payload(int depth, const Rect& region, const Point& p) {
+    const int k = D_ - depth; // remaining bits per axis
+    // store offsets within region
+    const uint32_t xoff = (uint32_t)(p.x - region.xmin);
+    const uint32_t yoff = (uint32_t)(p.y - region.ymin);
+    push_bits(P1lev_[depth], P1lev_bits_[depth], xoff, k);
+    push_bits(P1lev_[depth], P1lev_bits_[depth], yoff, k);
+}
+
+Point SingletonStopQuadTreeV2::read_singleton_payload(int depth, const Rect& region, uint32_t singleton_idx) const {
+    const int k = D_ - depth;
+    const size_t stride = (size_t)(2 * k);
+    const size_t base = (size_t)singleton_idx * stride;
+    const uint32_t xoff = (uint32_t)get_bits(P1lev_[depth], base, k);
+    const uint32_t yoff = (uint32_t)get_bits(P1lev_[depth], base + (size_t)k, k);
+    return Point{ region.xmin + (int)xoff, region.ymin + (int)yoff };
+}
+
+// ---------------- build ----------------
+void SingletonStopQuadTreeV2::build(const std::vector<Point>& points) {
+    pts_ = points;
+    scratch_.clear();
+
+    T_.clear(); T_bits_ = 0;
+    rankT_.clear();
+
+    level_start_.clear();
+
+    Slev_.clear(); Slev_bits_.clear(); rankSlev_.clear();
+    P1lev_.clear(); P1lev_bits_.clear();
+
+    stats_ = Stats{};
+
+    if (pts_.empty()) return;
+
+    build_bfs();
+    build_rank(T_, T_bits_, rankT_);
+
+    // build rank per level for Slev
+    for (int d = 0; d < (int)Slev_.size(); d++) {
+        build_rank(Slev_[d], Slev_bits_[d], rankSlev_[d]);
     }
 
-    // Heavy quadrant index stored in bits1-2
-    const int heavyQ = (meta >> 1) & 0x3;
-
-    // Heavy region is defined wrt split A
-    Rect heavyRegion = quadrant_rect(region, mxA, myA, heavyQ);
-
-    // Split B: midpoint of heavy region
-    geo_split(heavyRegion, mx, my);
+    // make points implicit
+    pts_.clear(); pts_.shrink_to_fit();
+    scratch_.clear(); scratch_.shrink_to_fit();
 }
 
+void SingletonStopQuadTreeV2::build_bfs() {
+    struct Task {
+        Rect region;
+        uint32_t start;
+        uint32_t count;
+        int depth;
+    };
 
+    std::vector<Task> q;
+    q.reserve(1024);
+    q.push_back(Task{world_, 0u, (uint32_t)pts_.size(), 0});
 
+    size_t head = 0;
 
-void QuadTree::build (const std::vector<Point>& input) {
-    //Clear any old tree 
-    delete root_;
-    root_ = nullptr;
+    // record level starts in BFS node index space
+    int current_depth = -1;
 
-    pts_ = input; //Copy the input points to our internal vector where we will reorder too
+    while (head < q.size()) {
+        Task t = q[head++];
 
-    //Create root node
-    root_ = new Node();
-    root_->start = 0;
-    root_->count = static_cast<uint32_t>(pts_.size());
+        if (t.depth != current_depth) {
+            current_depth = t.depth;
+            // node index about to be emitted = stats_.nodes
+            if ((int)level_start_.size() <= current_depth) level_start_.resize(current_depth + 1);
+            level_start_[current_depth] = (uint32_t)stats_.nodes;
+            ensure_level_storage(current_depth);
+        }
 
-    build_iterative(); //Calling the function that will build the tree
-
-}
-
-void QuadTree::build_iterative() {
-    //No points
-    if (!root_ || root_->count == 0) return;
-
-    //temp vector to hold the reordering of points
-    std::vector<Point> scratch;
-
-    //We are using stack to avoid recursion and stackoverflow issues
-    std::vector<BuildTask> st;
-    st.push_back(BuildTask{root_,world_,root_->start,root_->count,0});
-
-    while(!st.empty()){
-        BuildTask t = st.back();
-        st.pop_back();
-
-        Node* node = t.node;
         const Rect region = t.region;
         const uint32_t start = t.start;
         const uint32_t count = t.count;
-        const int level = t.level;
+        const int depth = t.depth;
 
-        //Store the start and end of the global array that this node holds
-        node->start = start;
-        node->count = count;
+        stats_.max_depth = std::max(stats_.max_depth, depth);
 
-        //Check teh cndition where the leaf cannot split
-        const int w = (region.xmax - region.xmin);
-        const int h = (region.ymax - region.ymin);
-        const bool cannot_split = (w < 2) || (h < 2); // i.e., 1x? or ?x1
+        const int w = region.xmax - region.xmin;
+        const int h = region.ymax - region.ymin;
         const bool is_unit = (w == 1 && h == 1);
 
-        if (unit_cell_mode_) {
-            // ONLY stop when we cannot split further (unit cell)
-            if (is_unit) {
-                // With unique grid points, count should be exactly 1 here.
-                continue;
-            }
-        } else {
-            // Normal mode (Option 0): stop by leaf_size OR cannot split. This was my first experiment keeping here for now
-            if (count <= static_cast<uint32_t>(leaf_size_) || cannot_split) {
-                continue;
-            }
+        // Emit node index (BFS)
+        const size_t node_i = stats_.nodes;
+        (void)node_i;
+
+        if (is_unit) {
+            stats_.nodes++;
+            stats_.leaves++;
+
+            // Slev bit for this node in this depth
+            push_bit(Slev_[depth], Slev_bits_[depth], false);
+            push_mask4(0u);
+            continue;
         }
 
+        // stop at singleton
+        if (count == 1) {
+            stats_.nodes++;
+            stats_.leaves++;
+            stats_.singleton_leaves++;
 
-        //Choose the split and encode the meta data
-        int mxChosen, myChosen;
-        std::array<int,4> countsA, countsB;
+            push_bit(Slev_[depth], Slev_bits_[depth], true);
+            push_singleton_payload(depth, region, pts_[start]);
 
-        choose_split_and_encode(node, region, start, count, mxChosen,myChosen,countsA,countsB);
-
-        // For Debugging purposes
-        const int n = static_cast<int>(count);
-        const int scoreA = balance_score(countsA, n);
-        const int scoreB = balance_score(countsB, n);
-
-        // For debug printing, also compute mxA/myA and mxB/myB deterministically
-        int mxA, myA;
-        geo_split(region, mxA, myA);
-
-        // heavy quadrant under A (same tie-breaking as in choose_split_and_encode)
-        int heavyQ = 0;
-        for (int q = 1; q < 4; q++) {
-            if (countsA[q] > countsA[heavyQ]) heavyQ = q;
-        }
-        Rect heavyRegion = quadrant_rect(region, mxA, myA, heavyQ);
-        int mxB, myB;
-        geo_split(heavyRegion, mxB, myB);
-
-        if (debug_) {
-            debug_print_node(level, region, start, count,mxA, myA, countsA, scoreA,mxB, myB, countsB, scoreB,mxChosen, myChosen,node->meta);
+            push_mask4(0u);
+            continue;
         }
 
-        //Rearrange the points of global array according to the split
-        std::array<int,4> countsChosen{0,0,0,0};
+        // internal
+        if (count == 0) continue;
 
-        //Count of how many points go in each quadrant
+        int mx, my;
+        geo_split(region, mx, my);
+
+        std::array<int,4> counts{0,0,0,0};
         for (uint32_t i = 0; i < count; i++) {
-            const Point& p = pts_[start + i];
-            int q = quadrant_of(mxChosen, myChosen, p);
-            countsChosen[q]++;
+            counts[quadrant_of(mx, my, pts_[start + i])] ++;
         }
 
-        //The starting indices of each quadrant 
+        // partition offsets
         std::array<uint32_t,4> off;
         off[0] = 0;
-        off[1] = off[0] + static_cast<uint32_t>(countsChosen[0]);
-        off[2] = off[1] + static_cast<uint32_t>(countsChosen[1]);
-        off[3] = off[2] + static_cast<uint32_t>(countsChosen[2]);
+        off[1] = off[0] + (uint32_t)counts[0];
+        off[2] = off[1] + (uint32_t)counts[1];
+        off[3] = off[2] + (uint32_t)counts[2];
 
-        // Temp array to write into scratch[0..count) and then copy back
-        if (scratch.size() < count) scratch.resize(count);
-
-        // Current write positions (relative to 0..count)
+        if (scratch_.size() < count) scratch_.resize(count);
         std::array<uint32_t,4> pos = off;
 
-        // Second pass- scatter into scratch grouped by quadrant
         for (uint32_t i = 0; i < count; i++) {
             const Point& p = pts_[start + i];
-            int q = quadrant_of(mxChosen, myChosen, p);
-            scratch[pos[q]++] = p;
+            const int qi = quadrant_of(mx, my, p);
+            scratch_[pos[qi]++] = p;
         }
+        for (uint32_t i = 0; i < count; i++) pts_[start + i] = scratch_[i];
 
-        // Copy back into the global array slice
-        for (uint32_t i = 0; i < count; i++) {
-            pts_[start + i] = scratch[i];
+        stats_.nodes++;
+        stats_.internal_nodes++;
+
+        push_bit(Slev_[depth], Slev_bits_[depth], false);
+
+        uint8_t mask = 0;
+        for (int qi = 0; qi < 4; qi++) if (counts[qi] > 0) mask |= (uint8_t)(1u << qi);
+        push_mask4(mask);
+
+        // enqueue children
+        for (int qi = 0; qi < 4; qi++) {
+            if (counts[qi] == 0) continue;
+
+            Rect cr = quadrant_rect(region, mx, my, qi);
+            const int cw = cr.xmax - cr.xmin;
+            const int ch = cr.ymax - cr.ymin;
+            if (cw <= 0 || ch <= 0) continue;
+            if (cw == w && ch == h) continue;
+
+            q.push_back(Task{cr, start + off[qi], (uint32_t)counts[qi], depth + 1});
         }
-
-        //We create only non-empty children and push tasks for next iteration
-        for (int q = 0; q < 4; q++) {
-            const int cq = countsChosen[q];
-            if (cq == 0) {
-                node->child[q] = nullptr;
-                continue;
-            }
-
-            const uint32_t chStart = start + off[q];
-            const uint32_t chCount = static_cast<uint32_t>(cq);
-
-            Rect chRegion = quadrant_rect(region, mxChosen, myChosen, q);
-
-            // --- Guard 1: skip empty regions (shouldn't happen for valid children)
-            const int cw = chRegion.xmax - chRegion.xmin;
-            const int ch = chRegion.ymax - chRegion.ymin;
-            if (cw <= 0 || ch <= 0) {
-                // This would mean our geometry produced a zero-area region.
-                // With cq>0, that indicates inconsistency; better to skip to avoid infinite loops.
-                node->child[q] = nullptr;
-                continue;
-            }
-
-            // --- Guard 2: ensure progress (child region must be strictly smaller than parent region)
-            if (cw == (region.xmax - region.xmin) && ch == (region.ymax - region.ymin)) {
-                // No geometric progress; avoid infinite loop
-                node->child[q] = nullptr;
-                continue;
-            }
-
-            Node* child = new Node();
-            node->child[q] = child;
-
-            st.push_back(BuildTask{child, chRegion, chStart, chCount, level + 1});
-        }
-
     }
+
+    // append final end marker for levels (optional but handy)
+    level_start_.push_back((uint32_t)stats_.nodes);
+
+    assert(T_bits_ == 4 * stats_.nodes);
 }
-
-void QuadTree::range_query(const Rect& q, std::vector<Point>& out) const {
+ 
+// ---------------- query ----------------
+void SingletonStopQuadTreeV2::range_query(const Rect& qrect, std::vector<Point>& out) const {
     out.clear();
-    if (!root_) return;
+    if (stats_.nodes == 0) return;
 
-    // Stack holds: node pointer + its region
     struct QTask {
-        Node* node;
+        size_t node_i;
         Rect region;
+        int depth;
     };
 
     std::vector<QTask> st;
-    st.push_back(QTask{root_, world_});
+    st.push_back(QTask{0, world_, 0});
 
     while (!st.empty()) {
         QTask t = st.back();
         st.pop_back();
 
-        Node* node = t.node;
-        const Rect region = t.region;
+        if (!t.region.intersects(qrect)) continue;
 
-        // If query doesn't intersect this node region, skip
-        if (!region.intersects(q)) continue;
+        const uint8_t mask = get_mask4(t.node_i);
+        const int w = t.region.xmax - t.region.xmin;
+        const int h = t.region.ymax - t.region.ymin;
 
-        // Check if leaf (no children)
-        bool hasChild = false;
-        for (int i = 0; i < 4; i++) {
-            if (node->child[i]) { hasChild = true; break; }
-        }
+        if (mask == 0) {
+            // leaf: either unit-cell leaf or singleton leaf
+            if (w == 1 && h == 1) {
+                Point p{t.region.xmin, t.region.ymin};
+                if (qrect.contains(p)) out.push_back(p);
+                continue;
+            }
 
-        if (!hasChild) {
-            // leaf is a unit cell, point is implicit
-            // The leaf region is [x,x+1) x [y,y+1)
-            // It intersects q, so output the point (x,y)
-            out.push_back(Point{region.xmin, region.ymin});
+            const int d = t.depth;
+            if (d >= (int)level_start_.size()-1) continue;
+
+            const uint32_t level_start = level_start_[d];
+            const uint32_t pos_in_level = (uint32_t)t.node_i - level_start;
+
+            // is singleton?
+            if (!get_bit(Slev_[d], pos_in_level)) {
+                // should not happen (non-unit leaf must be singleton), but be safe
+                continue;
+            }
+
+            const uint32_t singleton_idx = rank1_Slev(d, (size_t)pos_in_level + 1) - 1;
+            Point p = read_singleton_payload(d, t.region, singleton_idx);
+            if (qrect.contains(p)) out.push_back(p);
             continue;
         }
 
-        // Internal node: reconstruct chosen split, then push children
+        // internal
         int mx, my;
-        chosen_split(region, node->meta, mx, my);
+        geo_split(t.region, mx, my);
 
-        // Push children that exist (and their regions)
+        const size_t baseBit = 4 * t.node_i;
+
         for (int qi = 0; qi < 4; qi++) {
-            Node* ch = node->child[qi];
-            if (!ch) continue;
+            if ((mask & (1u << qi)) == 0) continue;
 
-            Rect cr = quadrant_rect(region, mx, my, qi);
-            // safety: skip empty regions
+            const size_t child = 1 + (size_t)rank1_T(baseBit + (size_t)qi);
+            Rect cr = quadrant_rect(t.region, mx, my, qi);
             if (cr.xmin >= cr.xmax || cr.ymin >= cr.ymax) continue;
 
-            st.push_back(QTask{ch, cr});
+            st.push_back(QTask{child, cr, t.depth + 1});
         }
     }
-}
-
-
-QuadTree::Stats QuadTree::compute_stats() const {
-    Stats s;
-    if (!root_) return s;
-
-    std::vector<std::pair<Node*, int>> st;
-    st.push_back({root_, 0});
-
-    while (!st.empty()) {
-        auto [cur, depth] = st.back();
-        st.pop_back();
-
-        s.nodes++;
-        s.max_depth = std::max(s.max_depth, depth);
-
-        bool hasChild = false;
-        for (int q = 0; q < 4; q++) {
-            if (cur->child[q]) {
-                hasChild = true;
-                st.push_back({cur->child[q], depth + 1});
-            }
-        }
-
-        if (!hasChild) {
-            s.leaves++;
-        } else {
-            s.internal_nodes++;
-            bool useHeavy = (cur->meta & 0x1) != 0;
-            if (useHeavy) s.heavy_splits++;
-            else s.normal_splits++;
-        }
-    }
-
-    return s;
 }
