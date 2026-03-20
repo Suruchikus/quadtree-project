@@ -1,106 +1,145 @@
 #pragma once
 
-#include <cstdint>
-#include <vector>
-#include <array>
-#include <algorithm>
+#include<cstdint>
+#include<vector>
+#include<array>
+#include<string>
 
 #include "point.h"
 #include "rect.h"
 
-// Stop at count==1, store point as (x_off,y_off) inside region using 2*(D-depth) bits.
-// Uses BFS-level layout: nodes at same depth are contiguous, so we store S + P1 per level.
-class SingletonStopQuadTreeV2 {
-public:
-    struct Stats{
-        size_t nodes = 0;
-        size_t internal_nodes = 0;
-        size_t leaves = 0;             // unit leaves + singleton leaves
-        size_t singleton_leaves = 0;   // count==1 and region > 1x1
-        int max_depth = 0;
-    };
+class MXQuadtreeBits{
+    public:
+        struct Params{     //All the universal construction parameter we will use, like D is the depth of the quadtree, which is a constant once we know the size of grid
+            int D = 0;
+        };
 
-    explicit SingletonStopQuadTreeV2(const Rect& world);
+        struct Stats{      //I will be measuring the bits per point, so I will declare all the stat parameters here
+            uint64_t points=0;
+            uint64_t N=0;
+            int D=0;
+            uint64_t T_bits = 0;
+            uint64_t UM_bits = 0;
+            uint64_t ULL_bits = 0;   //length bits for unary to leaf
+            uint64_t ULD_bits = 0;   //dir bits for unary to leaf
+            uint64_t UML_bits = 0;   //length from unary to mixed
+            uint64_t UMD_bits = 0;   //dir bits for unary to mixed
 
-    void build(const std::vector<Point>& points);
-    void range_query(const Rect& q, std::vector<Point>& out) const;
+            uint64_t total_nodes = 0;
+            uint64_t unary_to_leaf_nodes = 0;
+            uint64_t unary_to_mixed_nodes = 0;
+            uint64_t internal_nodes = 0;
+            uint64_t fullblock_nodes = 0;
+            uint64_t leaf_nodes = 0;
+            uint64_t mixed_internal = 0;
 
-    // memory accounting
-    size_t bytes_T() const { return T_.capacity() * sizeof(uint64_t); }
-    size_t bytes_rankT() const { return rankT_.capacity() * sizeof(uint32_t); }
+            double bpp = 0.0;
+        };
 
-    size_t bytes_S_levels() const;
-    size_t bytes_rankS_levels() const;
-    size_t bytes_P1_levels() const;
+        MXQuadtreeBits() = default;
 
-    size_t bytes_used() const {
-        return bytes_T() + bytes_rankT() + bytes_S_levels() + bytes_rankS_levels() + bytes_P1_levels();
-    }
+        void build(const Rect& region, const std::vector<Point>& pts, const Params& params);   //Entry point for construction of the data structure
+        bool contains(const Point& q) const;   //Membership Queries
 
-    Stats stats() const { return stats_; }
-    int D() const { return D_; }
+        const Stats& stats() const {
+            return stats_;
+        }
 
-private:
-    Rect world_;
-    int D_ = 0; // N=2^D
+    private:
+        //We first define a node and node analysis. This is to build teh logical structute of the tree which will help build the compressed version later. So, these two are more of helpers
+        struct Node{
+            Rect r;
+            int depth = 0;
+            std::vector<int> ids;
+        };
 
-    std::vector<Point> pts_;
-    std::vector<Point> scratch_;
+        struct NodeAnalysis{
+            bool is_unit_leaf = false;
+            bool is_fullblock = false;
+            bool expandable = false;
 
-    // T: 4 bits per node (BFS over all nodes)
-    std::vector<uint64_t> T_;
-    size_t T_bits_ = 0;
-    std::vector<uint32_t> rankT_;
+            uint8_t childMask = 0;
+            uint8_t nonempty_children = 0;
 
-    // BFS level boundaries: node indices [level_start[d], level_start[d+1]) are depth d
-    std::vector<uint32_t> level_start_; // size max_depth+2 (last is nodes)
+            std::array<std::vector<int>, 4> child_ids;
+            std::array<Rect, 4> child_rects;
+        };
 
-    // Per-level singleton markers and payloads
-    // Slev[d]: 1 bit per node at depth d (1 => singleton leaf)
-    std::vector<std::vector<uint64_t>> Slev_;
-    std::vector<size_t> Slev_bits_;
-    std::vector<std::vector<uint32_t>> rankSlev_;
+        //We will need a query state to know the node depth and region details as we navigate
+        struct QueryState{
+            Rect r;
+            int depth = 0;
+            uint64_t t_pos =0;  //starting bit position of this node in T
+        };
 
-    // P1lev[d]: packed stream of offsets. Each singleton uses 2*(D-d) bits.
-    std::vector<std::vector<uint64_t>> P1lev_;
-    std::vector<size_t> P1lev_bits_;
+        Node make_root() const;
+        Node make_child(const NodeAnalysis& a, const Node& parent, int child_idx) const;
 
-    Stats stats_;
+        //The next two functions give the midpoint and quadrant index for building the logical quadtree
+        static inline int midpoint(int a, int b){
+            return (a+b) >> 1;
+        }
 
-    // geometry
-    static void geo_split(const Rect& r, int& mx, int& my);
-    static int quadrant_of(int mx, int my, const Point& p);
-    static Rect quadrant_rect(const Rect& r, int mx, int my, int q);
+        static inline int quadrant_index(const Point& p, int xm, int ym){
+            const bool east = (p.x>=xm);
+            const bool north = (p.y>=ym);
 
-    // bit ops
-    void push_bit(std::vector<uint64_t>& bv, size_t& bits_used, bool b);
-    bool get_bit(const std::vector<uint64_t>& bv, size_t pos) const;
+            if(!east && !north) return 0; //SW
+            if(east && !north) return 1; //SE
+            if(!east && north) return 2; //NW
+            return 3; //NE
+        }
 
-    void push_mask4(uint8_t mask4);
-    uint8_t get_mask4(size_t node_i) const;
+        NodeAnalysis analyze_node(const Rect& r, int depth, const std::vector<int>& ids) const;
+        
+        Params params_;
+        Stats stats_;
+        Rect region_{0,0,0,0};
+        std::vector<Point> points_;
+        bool root_is_fullblock_=false;
+        bool root_is_unitleaf_=false;
 
-    // rank over generic bitvector
-    uint32_t rank1(const std::vector<uint64_t>& bv,
-                   const std::vector<uint32_t>& sup,
-                   size_t bits_used,
-                   size_t pos) const;
+        //Bit Packed storage
+        std::vector<uint64_t> T_;
+        std::vector<uint64_t> UM_;
+        std::vector<uint64_t> ULL_;
+        std::vector<uint64_t> ULD_;
+        std::vector<uint64_t> UML_;
+        std::vector<uint64_t> UMD_;
 
-    void build_rank(const std::vector<uint64_t>& bv, size_t bits_used, std::vector<uint32_t>& out_sup);
+        uint64_t T_len_=0;
+        uint64_t UM_len_=0;
+        uint64_t ULL_len_=0;
+        uint64_t ULD_len_=0;
+        uint64_t UML_len_=0;
+        uint64_t UMD_len_=0;
 
-    uint32_t rank1_T(size_t pos) const { return rank1(T_, rankT_, T_bits_, pos); }
+        //bit helpers
+        static void push_bits(std::vector<uint64_t>& dst, uint64_t& bit_len, uint64_t value, int width);
+        static uint64_t get_bit(const std::vector<uint64_t>& src, uint64_t bit_pos);
+        static uint64_t read_bits(const std::vector<uint64_t>& src, uint64_t bit_pos, int width);
+        Rect child_rect(const Rect& r,int child_idx) const;
 
-    uint32_t rank1_Slev(int d, size_t pos) const {
-        return rank1(Slev_[d], rankSlev_[d], Slev_bits_[d], pos);
-    }
+        //unary skip support
+        struct UnarySkipResult{
+            uint8_t L=0;
+            std::vector<uint8_t> dirs;
+            Node endpoint;
+            NodeAnalysis endpoint_analysis;
+        };
 
-    // payload pack/unpack (LSB-first)
-    void push_bits(std::vector<uint64_t>& bv, size_t& bits_used, uint64_t value, int nbits);
-    uint64_t get_bits(const std::vector<uint64_t>& bv, size_t bitpos, int nbits) const;
+        UnarySkipResult follow_unary_chain(const Node& start) const;
 
-    void push_singleton_payload(int depth, const Rect& region, const Point& p);
-    Point read_singleton_payload(int depth, const Rect& region, uint32_t singleton_idx) const;
+        //contracted tree builder
+        void build_bfs_contracted();
 
-    // build
-    void build_bfs();
-    void ensure_level_storage(int depth);
+        //Rank/Select helpers
+        uint64_t rank1_T(uint64_t bit_pos) const;               //Number of 1 bit before bit_pos in T
+        uint64_t state_at_S(uint64_t child_index) const;  //Read the 2 bit state
+        uint64_t rank_unary_S(uint64_t child_index) const;  //Count earlier unary entires
+        uint64_t rank_continue_S(uint64_t child_index) const;  //Count earlier children that continue in T
+        uint64_t next_node_id_for_child(uint64_t child_bit_pos) const; //Find the point in T
+        uint64_t unary_path_offset(uint64_t unary_index) const;    //Find where the directions given the unary entry in U begin in P
+
+
 };
