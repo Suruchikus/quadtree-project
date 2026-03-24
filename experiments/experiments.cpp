@@ -54,9 +54,10 @@ int main(int argc, char** argv) {
     std::cout << "Depth D = " << st.D << "\n\n";
 
     std::cout << "Bits: T=" << st.T_bits
+              << " EX=" << st.EX_bits
               << " UM=" << st.UM_bits
+              << " UL=" << st.UL_bits
               << " ULD=" << st.ULD_bits
-              << " ULL=" << st.ULL_bits
               << " UML=" << st.UML_bits
               << " UMD=" << st.UMD_bits << "\n";
 
@@ -65,5 +66,7 @@ int main(int argc, char** argv) {
 
 
     std::cout << "Build completed.\n";
+
+    qt.print_logical_quadtree_stats();
     return 0;
 }

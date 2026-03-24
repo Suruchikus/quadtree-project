@@ -19,7 +19,9 @@ class MXQuadtreeBits{
             uint64_t N=0;
             int D=0;
             uint64_t T_bits = 0;
+            uint64_t EX_bits = 0;
             uint64_t UM_bits = 0;
+            uint64_t UL_bits = 0;
             uint64_t ULL_bits = 0;   //length bits for unary to leaf
             uint64_t ULD_bits = 0;   //dir bits for unary to leaf
             uint64_t UML_bits = 0;   //length from unary to mixed
@@ -40,6 +42,8 @@ class MXQuadtreeBits{
 
         void build(const Rect& region, const std::vector<Point>& pts, const Params& params);   //Entry point for construction of the data structure
         bool contains(const Point& q) const;   //Membership Queries
+
+        void print_logical_quadtree_stats() const;
 
         const Stats& stats() const {
             return stats_;
@@ -101,14 +105,18 @@ class MXQuadtreeBits{
 
         //Bit Packed storage
         std::vector<uint64_t> T_;
+        std::vector<uint64_t> EX_;
         std::vector<uint64_t> UM_;
+        std::vector<uint64_t> UL_;
         std::vector<uint64_t> ULL_;
         std::vector<uint64_t> ULD_;
         std::vector<uint64_t> UML_;
         std::vector<uint64_t> UMD_;
 
         uint64_t T_len_=0;
+        uint64_t EX_len_=0;
         uint64_t UM_len_=0;
+        uint64_t UL_len_=0;
         uint64_t ULL_len_=0;
         uint64_t ULD_len_=0;
         uint64_t UML_len_=0;
@@ -134,12 +142,10 @@ class MXQuadtreeBits{
         void build_bfs_contracted();
 
         //Rank/Select helpers
-        uint64_t rank1_T(uint64_t bit_pos) const;               //Number of 1 bit before bit_pos in T
-        uint64_t state_at_S(uint64_t child_index) const;  //Read the 2 bit state
-        uint64_t rank_unary_S(uint64_t child_index) const;  //Count earlier unary entires
-        uint64_t rank_continue_S(uint64_t child_index) const;  //Count earlier children that continue in T
-        uint64_t next_node_id_for_child(uint64_t child_bit_pos) const; //Find the point in T
-        uint64_t unary_path_offset(uint64_t unary_index) const;    //Find where the directions given the unary entry in U begin in P
-
-
+        uint64_t rank1_T(uint64_t bit_pos) const;
+        uint64_t rank1_EX(uint64_t bit_pos) const;
+        uint64_t rank1_UM(uint64_t bit_pos) const;
+        uint64_t rank1_UL(uint64_t bit_pos) const;
+        uint64_t select1_UML(uint64_t k) const;
+        uint64_t select1_ULL(uint64_t k) const;
 };
