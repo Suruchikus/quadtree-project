@@ -62,11 +62,10 @@ int main(int argc, char** argv) {
               << " UMD=" << st.UMD_bits << "\n";
 
     std::cout << "Bits per point (bpp)=" << st.bpp << "\n\n";
-    std::cout << "Normal mixed nodes=" << st.mixed_internal<< "\n\n";
-
+    std::cout << "Unary to mixed=" << st.unary_to_mixed_nodes << "\n\n";
+    std::cout << "Unary to leaf=" << st.unary_to_leaf_nodes << "\n\n";
 
     std::cout << "Build completed.\n";
 
-    qt.print_logical_quadtree_stats();
     return 0;
 }
