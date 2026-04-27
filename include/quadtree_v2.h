@@ -22,24 +22,17 @@ public:
 
         uint64_t T_bits = 0;
         uint64_t EX_bits = 0;
-        uint64_t UM_bits = 0;
-        uint64_t UL_bits = 0;    // total bits across all UL_level_
-        uint64_t ULD_bits = 0;   // total bits across all ULD_level_
-        uint64_t UML_bits = 0;
-        uint64_t UMD_bits = 0;
-        uint64_t ULL_bits = 0;
+        uint64_t UL_bits = 0;    
+        uint64_t ULD_bits = 0;   
 
         uint64_t total_nodes = 0;
         uint64_t unary_to_leaf_nodes = 0;
-        uint64_t unary_to_mixed_nodes = 0;
         uint64_t internal_nodes = 0;
         uint64_t fullblock_nodes = 0;
         uint64_t leaf_nodes = 0;
-        uint64_t mixed_internal = 0;
 
         uint64_t rank_T_bits = 0;
         uint64_t rank_EX_bits = 0;
-        uint64_t rank_UM_bits = 0;
         uint64_t rank_UL_bits = 0;
         uint64_t rank_bits = 0;
 
@@ -111,22 +104,14 @@ private:
     std::vector<uint64_t> T_;
     std::vector<uint64_t> EX_;
     std::vector<uint64_t> UL_;
-    std::vector<uint64_t> UM_;
-    std::vector<uint64_t> UML_;
-    std::vector<uint64_t> UMD_;
-    std::vector<uint64_t> ULD_;
-    std::vector<uint64_t> ULL_;   // number of UL=1 (unary-to-leaf) per level
+    std::vector<uint64_t> ULD_;  
 
-    
+    std::vector<uint64_t> uleaf_count_by_depth_;
 
     uint64_t T_len_ = 0;
     uint64_t EX_len_ = 0;
     uint64_t UL_len_ = 0;
-    uint64_t UM_len_ = 0;
-    uint64_t UML_len_ = 0;
-    uint64_t UMD_len_ = 0;
     uint64_t ULD_len_ = 0;
-    uint64_t ULL_len_ = 0;
 
     // Bit helpers
     static void push_bits(std::vector<uint64_t>& dst, uint64_t& bit_len, uint64_t value, int width);
@@ -150,14 +135,10 @@ private:
     uint64_t rank1_T(uint64_t bit_pos) const;
     uint64_t rank1_EX(uint64_t bit_pos) const;
     uint64_t rank0_EX(uint64_t bit_pos) const;
-    uint64_t rank1_UM(uint64_t bit_pos) const;
-    uint64_t rank0_UM(uint64_t bit_pos) const;
     uint64_t rank1_UL(uint64_t bit_pos) const;
-    uint64_t select1_UML(uint64_t k) const;
 
     RankSupport64 rank_T_;
     RankSupport64 rank_EX_;
-    RankSupport64 rank_UM_;
     RankSupport64 rank_UL_;
 
 };

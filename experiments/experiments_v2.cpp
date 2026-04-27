@@ -4,7 +4,7 @@
 #include <algorithm>
 
 #include "io.h"
-#include "quadtree.h"
+#include "quadtree_v2.h"
 
 static inline int compute_N_pow2(const std::vector<Point>& pts) {
     int maxCoord = 0;
@@ -55,30 +55,25 @@ int main(int argc, char** argv) {
 
     std::cout << "Bits: T=" << st.T_bits
               << " EX=" << st.EX_bits
-              << " UM=" << st.UM_bits
               << " UL=" << st.UL_bits
-              << " ULL=" << st.ULL_bits
-              << " ULD=" << st.ULD_bits
-              << " UML=" << st.UML_bits
-              << " UMD=" << st.UMD_bits << "\n";
+              << " ULD=" << st.ULD_bits << "\n";
 
     std::cout << "Bits per point (bpp)=" << st.bpp << "\n\n";
-    // std::cout << "Unary to mixed=" << st.unary_to_mixed_nodes << "\n\n";
-    // std::cout << "Unary to leaf=" << st.unary_to_leaf_nodes << "\n\n";
+    std::cout << "Unary to leaf=" << st.unary_to_leaf_nodes << "\n\n";
     std::cout << "leaf=" << st.leaf_nodes << "\n\n";
-    // std::cout << "fullblock=" << st.fullblock_nodes << "\n\n";
-    // std::cout << "internal nodes=" << st.internal_nodes << "\n\n";
+    std::cout << "fullblock=" << st.fullblock_nodes << "\n\n";
+    std::cout << "internal nodes=" << st.internal_nodes << "\n\n";
 
     std::cout << "Build completed.\n";
 
-    // std::vector<Point> queries = {
-    //     {4,749290},
-    // };
+    std::vector<Point> queries = {
+        {4,749290},
+    };
 
-    // for (const auto& q : queries) {
-    //     std::cout << "Query (" << q.x << "," << q.y << "): "
-    //             << (qt.membership(q) ? "FOUND" : "NOT FOUND") << "\n";
-    // }
+    for (const auto& q : queries) {
+        std::cout << "Query (" << q.x << "," << q.y << "): "
+                << (qt.membership(q) ? "FOUND" : "NOT FOUND") << "\n";
+    }
 
     return 0;
 }
