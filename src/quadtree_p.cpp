@@ -1,4 +1,4 @@
-#include "quadtree_v2.h"
+#include "quadtree_p.h"
 #include <iostream>
 
 
@@ -174,6 +174,60 @@ uint64_t MXQuadtreeBits::read_bits(const std::vector<uint64_t>& src, uint64_t bi
     return result;
 }
 
+inline uint64_t MXQuadtreeBits::read_T4(uint64_t bit_pos) const {
+    const uint64_t word_idx = bit_pos >> 6;      // bit_pos / 64
+    const uint64_t offset   = bit_pos & 63ULL;   // bit_pos % 64
+
+    uint64_t x = T_[word_idx] >> offset;
+
+    if (offset > 60) {
+        x |= T_[word_idx + 1] << (64 - offset);
+    }
+
+    return x & 15ULL;
+}
+
+inline uint64_t MXQuadtreeBits::read_bit_fast(
+    const std::vector<uint64_t>& bits,
+    uint64_t pos
+) const {
+    return (bits[pos >> 6] >> (pos & 63ULL)) & 1ULL;
+}
+
+inline uint64_t MXQuadtreeBits::read_2_fast(
+    const std::vector<uint64_t>& bits,
+    uint64_t pos
+) const {
+    const uint64_t word_idx = pos >> 6;
+    const uint64_t offset = pos & 63ULL;
+
+    uint64_t x = bits[word_idx] >> offset;
+
+    if (offset > 62) {
+        x |= bits[word_idx + 1] << (64 - offset);
+    }
+
+    return x & 3ULL;
+}
+
+inline uint64_t MXQuadtreeBits::uld_offset_for(
+    uint64_t uleaf_index,
+    int child_depth
+) const {
+    uint64_t dir_start = 0;
+    uint64_t before_this_depth = 0;
+
+    for (int d = 0; d < child_depth; d++) {
+        const uint64_t cnt = uleaf_count_by_depth_[d];
+        dir_start += cnt * (uint64_t)(params_.D - d) * 2ULL;
+        before_this_depth += cnt;
+    }
+
+    const uint64_t local_idx = uleaf_index - before_this_depth;
+    const uint64_t rem_len = (uint64_t)(params_.D - child_depth);
+
+    return dir_start + local_idx * rem_len * 2ULL;
+}
 
 void MXQuadtreeBits::build_bfs_contracted() {
     T_.clear();
@@ -308,8 +362,7 @@ void MXQuadtreeBits::build_bfs_contracted() {
     stats_.UL_bits = UL_len_;
     stats_.ULD_bits = ULD_len_;
 
-    const uint64_t uleaf_count_bits =
-    (uint64_t)uleaf_count_by_depth_.size() * 64ULL;
+    const uint64_t uleaf_count_bits = (uint64_t)uleaf_count_by_depth_.size() * 64ULL;
 
     const uint64_t total_bits =
         T_len_ +
@@ -383,111 +436,97 @@ bool MXQuadtreeBits::membership(const Point& q) const {
         return false;
     }
 
-    if (points_.empty()) {
-        return false;
-    }
+    if (points_.empty()) return false;
+    if (root_is_fullblock_) return true;
+    if (root_is_unitleaf_) return true;
 
-    if (root_is_fullblock_) {
-        return true;
-    }
+    int xmin = region_.xmin;
+    int xmax = region_.xmax;
+    int ymin = region_.ymin;
+    int ymax = region_.ymax;
 
-    if (root_is_unitleaf_) {
-        return true;
-    }
-
-    Rect curr_r = region_;
-    int curr_depth = 0;
-    uint64_t curr_t_pos = 0;
+    int depth = 0;
+    uint64_t t_pos = 0;
 
     while (true) {
-        const uint64_t childMask = read_bits(T_, curr_t_pos, 4);
+        const uint64_t mask = read_T4(t_pos);
 
-        const int xm = midpoint(curr_r.xmin, curr_r.xmax);
-        const int ym = midpoint(curr_r.ymin, curr_r.ymax);
-        const int child_idx = quadrant_index(q, xm, ym);
+        const int xm = (xmin + xmax) >> 1;
+        const int ym = (ymin + ymax) >> 1;
 
-        if (((childMask >> child_idx) & 1ULL) == 0ULL) {
+        const bool east = q.x >= xm;
+        const bool north = q.y >= ym;
+
+        const uint64_t child =
+            east ? (north ? 3ULL : 1ULL)
+                 : (north ? 2ULL : 0ULL);
+
+        if (((mask >> child) & 1ULL) == 0ULL) {
             return false;
         }
 
-        Rect child_r = child_rect(curr_r, child_idx);
-        const int child_depth = curr_depth + 1;
+        if (east) xmin = xm;
+        else xmax = xm;
 
-        // Direct unit leaf: no EX/UL exists for this edge.
+        if (north) ymin = ym;
+        else ymax = ym;
+
+        const int child_depth = depth + 1;
+
         if (child_depth == params_.D) {
             return true;
         }
 
-        const uint64_t child_t_bit_pos =
-            curr_t_pos + (uint64_t)child_idx;
-
+        const uint64_t child_t_bit_pos = t_pos + child;
         const uint64_t ex_pos = rank1_T(child_t_bit_pos);
-        const uint64_t ex_bit = get_bit(EX_, ex_pos);
+        const uint64_t ex_bit = read_bit_fast(EX_, ex_pos);
+        const uint64_t ex_rank1 = rank1_EX(ex_pos);
 
         if (ex_bit == 0ULL) {
-            // Normal explicit child.
-            const uint64_t next_node_idx = 1ULL + rank0_EX(ex_pos);
+            const uint64_t zeros_before_ex = ex_pos - ex_rank1;
+            const uint64_t next_node_idx = 1ULL + zeros_before_ex;
 
-            curr_t_pos = 4ULL * next_node_idx;
-            curr_r = child_r;
-            curr_depth = child_depth;
+            t_pos = 4ULL * next_node_idx;
+            depth = child_depth;
             continue;
         }
 
-        // EX=1 means terminal shortcut.
-        const uint64_t ul_pos = rank1_EX(ex_pos);
-        const uint64_t ul_bit = get_bit(UL_, ul_pos);
+        const uint64_t ul_pos = ex_rank1;
+        const uint64_t ul_bit = read_bit_fast(UL_, ul_pos);
 
         if (ul_bit == 0ULL) {
-            // Fullblock terminal.
             return true;
         }
 
-        // UL=1 means unary-to-leaf.
-        const uint64_t total_uleaf_before_pos = rank1_UL(ul_pos);
-
-        uint64_t dir_start = 0;
-        uint64_t count_before_level = 0;
-
-        for (int d = 0; d < child_depth; d++) {
-            const uint64_t rem_len_d =
-                (uint64_t)(params_.D - d);
-
-            dir_start +=
-                uleaf_count_by_depth_[d] * rem_len_d * 2ULL;
-
-            count_before_level += uleaf_count_by_depth_[d];
-        }
-
-        const uint64_t local_idx =
-            total_uleaf_before_pos - count_before_level;
-
-        const uint64_t rem_len =
-            (uint64_t)(params_.D - child_depth);
-
-        dir_start += local_idx * rem_len * 2ULL;
-
-        Rect r = child_r;
+        const uint64_t uleaf_index = rank1_UL(ul_pos);
+        const uint64_t rem_len = (uint64_t)(params_.D - child_depth);
+        const uint64_t dir_start = uld_offset_for(uleaf_index, child_depth);
 
         for (uint64_t step = 0; step < rem_len; step++) {
-            const uint64_t got =
-                read_bits(ULD_, dir_start + 2ULL * step, 2);
+            const uint64_t stored_dir =
+                read_2_fast(ULD_, dir_start + 2ULL * step);
 
-            const int xm2 = midpoint(r.xmin, r.xmax);
-            const int ym2 = midpoint(r.ymin, r.ymax);
+            const int xm2 = (xmin + xmax) >> 1;
+            const int ym2 = (ymin + ymax) >> 1;
 
-            const uint64_t want =
-                (uint64_t)quadrant_index(q, xm2, ym2);
+            const bool east2 = q.x >= xm2;
+            const bool north2 = q.y >= ym2;
 
-            if (want != got) {
+            const uint64_t wanted_dir =
+                east2 ? (north2 ? 3ULL : 1ULL)
+                      : (north2 ? 2ULL : 0ULL);
+
+            if (wanted_dir != stored_dir) {
                 return false;
             }
 
-            r = child_rect(r, (int)got);
+            if (east2) xmin = xm2;
+            else xmax = xm2;
+
+            if (north2) ymin = ym2;
+            else ymax = ym2;
         }
 
         return true;
     }
-
-    return false;
 }

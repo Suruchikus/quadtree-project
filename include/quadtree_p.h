@@ -117,6 +117,22 @@ private:
     static void push_bits(std::vector<uint64_t>& dst, uint64_t& bit_len, uint64_t value, int width);
     static uint64_t get_bit(const std::vector<uint64_t>& src, uint64_t bit_pos);
     static uint64_t read_bits(const std::vector<uint64_t>& src, uint64_t bit_pos, int width);
+    inline uint64_t read_T4(uint64_t bit_pos) const;
+
+    inline uint64_t read_bit_fast(
+        const std::vector<uint64_t>& bits,
+        uint64_t pos
+    ) const;
+
+    inline uint64_t read_2_fast(
+        const std::vector<uint64_t>& bits,
+        uint64_t pos
+    ) const;
+
+    inline uint64_t uld_offset_for(
+        uint64_t uleaf_index,
+        int child_depth
+    ) const;
 
     Rect child_rect(const Rect& r, int child_idx) const;
 
