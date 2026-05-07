@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <vector>
 #include <array>
-#include <string>
 
 #include "point.h"
 #include "rect.h"
@@ -22,25 +21,28 @@ public:
 
         uint64_t T_bits = 0;
         uint64_t EX_bits = 0;
-        uint64_t UM_bits = 0;
-        uint64_t UL_bits = 0;    // total bits across all UL_level_
-        uint64_t ULD_bits = 0;   // total bits across all ULD_level_
-        uint64_t UML_bits = 0;
-        uint64_t UMD_bits = 0;
-        uint64_t ULL_bits = 0;
+
+        // EX = 1 terminal/compressed case
+        uint64_t UL_bits = 0;
+        uint64_t ULD_bits = 0;
+
+        // EX = 0 internal case
+        uint64_t UR_bits = 0;
+        uint64_t URL_bits = 0;
+        uint64_t URP_bits = 0;
 
         uint64_t total_nodes = 0;
-        uint64_t unary_to_leaf_nodes = 0;
-        uint64_t unary_to_mixed_nodes = 0;
         uint64_t internal_nodes = 0;
         uint64_t fullblock_nodes = 0;
         uint64_t leaf_nodes = 0;
-        uint64_t mixed_internal = 0;
+
+        uint64_t unary_to_leaf_nodes = 0;
+        uint64_t unary_to_regular_nodes = 0;
 
         uint64_t rank_T_bits = 0;
         uint64_t rank_EX_bits = 0;
-        uint64_t rank_UM_bits = 0;
         uint64_t rank_UL_bits = 0;
+        uint64_t rank_UR_bits = 0;
         uint64_t rank_bits = 0;
 
         double bpp = 0.0;
@@ -48,15 +50,21 @@ public:
 
     MXQuadtreeBits() = default;
 
-    void build(const Rect& region, const std::vector<Point>& pts, const Params& params);
-    bool membership(const Point& q) const;  
+    void build(
+        const Rect& region,
+        const std::vector<Point>& pts,
+        const Params& params
+    );
+
+    bool membership(const Point& q) const;
 
     const Stats& stats() const {
         return stats_;
     }
 
-
 private:
+    static constexpr int URL_WIDTH = 5;
+
     struct Node {
         Rect r;
         int depth = 0;
@@ -75,14 +83,92 @@ private:
         std::array<Rect, 4> child_rects;
     };
 
-    struct QueryState {
-        Rect r;
-        int depth = 0;
-        uint64_t t_pos = 0;
+    struct UnarySkipResult {
+        uint8_t L = 0;
+        std::vector<uint8_t> dirs;
+        Node endpoint;
+        NodeAnalysis endpoint_analysis;
     };
 
+    Params params_;
+    Stats stats_;
+
+    Rect region_{0, 0, 0, 0};
+    std::vector<Point> points_;
+
+    bool root_is_fullblock_ = false;
+    bool root_is_unitleaf_ = false;
+
+    // T stores 4-bit child masks for regular internal nodes.
+    std::vector<uint64_t> T_;
+
+    // EX is stored for every existing child bit in T.
+    //
+    // EX = 1:
+    //     terminal/compressed case
+    //     use UL
+    //
+    // EX = 0:
+    //     internal case
+    //     use UR
+    std::vector<uint64_t> EX_;
+
+    // Stored for every EX = 1.
+    //
+    // UL = 1:
+    //     unary-to-leaf
+    //     use ULD
+    //
+    // UL = 0:
+    //     fullblock / terminal
+    std::vector<uint64_t> UL_;
+    std::vector<uint64_t> ULD_;
+
+    // Stored for every EX = 0.
+    //
+    // UR = 0:
+    //     normal internal child stored in next BFS level of T
+    //
+    // UR = 1:
+    //     unary-to-regular
+    //     use URL and URP
+    std::vector<uint64_t> UR_;
+
+    // Stored for every UR = 1.
+    //
+    // URL stores unary-to-regular length using fixed URL_WIDTH bits.
+    // URP stores the path using 2 bits per skipped level.
+    std::vector<uint64_t> URL_;
+    std::vector<uint64_t> URP_;
+
+    // Existing compact offset support for unary-to-leaf paths.
+    std::vector<uint64_t> uleaf_count_by_depth_;
+
+    uint64_t T_len_ = 0;
+    uint64_t EX_len_ = 0;
+    uint64_t UL_len_ = 0;
+    uint64_t ULD_len_ = 0;
+    uint64_t UR_len_ = 0;
+    uint64_t URL_len_ = 0;
+    uint64_t URP_len_ = 0;
+
     Node make_root() const;
-    Node make_child(const NodeAnalysis& a, const Node& parent, int child_idx) const;
+
+    Node make_child(
+        const NodeAnalysis& a,
+        const Node& parent,
+        int child_idx
+    ) const;
+
+    NodeAnalysis analyze_node(
+        const Rect& r,
+        int depth,
+        const std::vector<int>& ids
+    ) const;
+
+    UnarySkipResult follow_unary_chain(const Node& start) const;
+
+    void build_bfs_contracted();
 
     static inline int midpoint(int a, int b) {
         return (a + b) >> 1;
@@ -98,66 +184,63 @@ private:
         return 3;                      // NE
     }
 
-    NodeAnalysis analyze_node(const Rect& r, int depth, const std::vector<int>& ids) const;
-
-    Params params_;
-    Stats stats_;
-    Rect region_{0, 0, 0, 0};
-    std::vector<Point> points_;
-    bool root_is_fullblock_ = false;
-    bool root_is_unitleaf_ = false;
-
-    // Bit packed storage
-    std::vector<uint64_t> T_;
-    std::vector<uint64_t> EX_;
-    std::vector<uint64_t> UL_;
-    std::vector<uint64_t> UM_;
-    std::vector<uint64_t> UML_;
-    std::vector<uint64_t> UMD_;
-    std::vector<uint64_t> ULD_;
-    std::vector<uint64_t> ULL_;   // number of UL=1 (unary-to-leaf) per level
-
-    
-
-    uint64_t T_len_ = 0;
-    uint64_t EX_len_ = 0;
-    uint64_t UL_len_ = 0;
-    uint64_t UM_len_ = 0;
-    uint64_t UML_len_ = 0;
-    uint64_t UMD_len_ = 0;
-    uint64_t ULD_len_ = 0;
-    uint64_t ULL_len_ = 0;
-
-    // Bit helpers
-    static void push_bits(std::vector<uint64_t>& dst, uint64_t& bit_len, uint64_t value, int width);
-    static uint64_t get_bit(const std::vector<uint64_t>& src, uint64_t bit_pos);
-    static uint64_t read_bits(const std::vector<uint64_t>& src, uint64_t bit_pos, int width);
-
     Rect child_rect(const Rect& r, int child_idx) const;
 
-    struct UnarySkipResult {
-        uint8_t L = 0;
-        std::vector<uint8_t> dirs;
-        Node endpoint;
-        NodeAnalysis endpoint_analysis;
-    };
+    // Bit helpers
+    static void push_bits(
+        std::vector<uint64_t>& dst,
+        uint64_t& bit_len,
+        uint64_t value,
+        int width
+    );
 
-    UnarySkipResult follow_unary_chain(const Node& start) const;
+    static uint64_t get_bit(
+        const std::vector<uint64_t>& src,
+        uint64_t bit_pos
+    );
 
-    void build_bfs_contracted();
+    static uint64_t read_bits(
+        const std::vector<uint64_t>& src,
+        uint64_t bit_pos,
+        int width
+    );
 
-    // Rank/Select helpers kept as before where still relevant
+    inline uint64_t read_T4(uint64_t bit_pos) const;
+
+    inline uint64_t read_bit_fast(
+        const std::vector<uint64_t>& bits,
+        uint64_t pos
+    ) const;
+
+    inline uint64_t read_2_fast(
+        const std::vector<uint64_t>& bits,
+        uint64_t pos
+    ) const;
+
+    // Unary-to-leaf helper
+    inline uint64_t uld_offset_for(
+        uint64_t uleaf_index,
+        int child_depth
+    ) const;
+
+    // Unary-to-regular helpers
+    inline uint8_t ur_length_for(
+        uint64_t uregular_index
+    ) const;
+
+    inline uint64_t urp_offset_for(
+        uint64_t uregular_index
+    ) const;
+
+    // Rank helpers
     uint64_t rank1_T(uint64_t bit_pos) const;
     uint64_t rank1_EX(uint64_t bit_pos) const;
     uint64_t rank0_EX(uint64_t bit_pos) const;
-    uint64_t rank1_UM(uint64_t bit_pos) const;
-    uint64_t rank0_UM(uint64_t bit_pos) const;
     uint64_t rank1_UL(uint64_t bit_pos) const;
-    uint64_t select1_UML(uint64_t k) const;
+    uint64_t rank1_UR(uint64_t bit_pos) const;
 
     RankSupport64 rank_T_;
     RankSupport64 rank_EX_;
-    RankSupport64 rank_UM_;
     RankSupport64 rank_UL_;
-
+    RankSupport64 rank_UR_;
 };

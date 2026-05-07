@@ -300,9 +300,19 @@ void MXQuadtreeBits::build_bfs_contracted() {
                         push_bits(EX_, EX_len_, 1ULL, 1);
                         push_bits(UL_, UL_len_, 1ULL, 1);
 
-                        for (uint8_t dir : sk.dirs) {
-                            push_bits(ULD_, ULD_len_, (uint64_t)(dir & 3u), 2);
-                        }
+                        const uint64_t rem_len = (uint64_t)(params_.D - child.depth);
+
+                        // endpoint is the final 1x1 leaf cell
+                        const uint64_t local_x =
+                            (uint64_t)(sk.endpoint.r.xmin - child.r.xmin);
+
+                        const uint64_t local_y =
+                            (uint64_t)(sk.endpoint.r.ymin - child.r.ymin);
+
+                        // Store direct destination inside this child region.
+                        // Width is rem_len bits for x and rem_len bits for y.
+                        push_bits(ULD_, ULD_len_, local_x, (int)rem_len);
+                        push_bits(ULD_, ULD_len_, local_y, (int)rem_len);
 
                         uleaf_count_by_depth_[child.depth]++;
 
@@ -502,31 +512,19 @@ bool MXQuadtreeBits::membership(const Point& q) const {
         const uint64_t rem_len = (uint64_t)(params_.D - child_depth);
         const uint64_t dir_start = uld_offset_for(uleaf_index, child_depth);
 
-        for (uint64_t step = 0; step < rem_len; step++) {
-            const uint64_t stored_dir =
-                read_2_fast(ULD_, dir_start + 2ULL * step);
+        const uint64_t stored_x =
+            read_bits(ULD_, dir_start, (int)rem_len);
 
-            const int xm2 = (xmin + xmax) >> 1;
-            const int ym2 = (ymin + ymax) >> 1;
+        const uint64_t stored_y =
+            read_bits(ULD_, dir_start + rem_len, (int)rem_len);
 
-            const bool east2 = q.x >= xm2;
-            const bool north2 = q.y >= ym2;
+        const uint64_t query_x =
+            (uint64_t)(q.x - xmin);
 
-            const uint64_t wanted_dir =
-                east2 ? (north2 ? 3ULL : 1ULL)
-                      : (north2 ? 2ULL : 0ULL);
+        const uint64_t query_y =
+            (uint64_t)(q.y - ymin);
 
-            if (wanted_dir != stored_dir) {
-                return false;
-            }
+        return query_x == stored_x && query_y == stored_y;
 
-            if (east2) xmin = xm2;
-            else xmax = xm2;
-
-            if (north2) ymin = ym2;
-            else ymax = ym2;
-        }
-
-        return true;
     }
 }

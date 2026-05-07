@@ -53,31 +53,28 @@ int main(int argc, char** argv) {
     std::cout << "Grid N = " << st.N << "\n";
     std::cout << "Depth D = " << st.D << "\n\n";
 
-    std::cout << "Bits: T=" << st.T_bits
-              << " EX=" << st.EX_bits
-              << " UM=" << st.UM_bits
-              << " UL=" << st.UL_bits
-              << " ULL=" << st.ULL_bits
-              << " ULD=" << st.ULD_bits
-              << " UML=" << st.UML_bits
-              << " UMD=" << st.UMD_bits << "\n";
+    std::cout << "Bits:\n";
+    std::cout << "  T   = " << st.T_bits << "\n";
+    std::cout << "  EX  = " << st.EX_bits << "\n";
+    std::cout << "  UR  = " << st.UR_bits << "\n";
+    std::cout << "  UL  = " << st.UL_bits << "\n";
+    std::cout << "  URL = " << st.URL_bits << "\n";
+    std::cout << "  URP = " << st.URP_bits << "\n";
+    std::cout << "  ULD = " << st.ULD_bits << "\n";
+    std::cout << "  rank = " << st.rank_bits << "\n\n";
 
-    std::cout << "Bits per point (bpp)=" << st.bpp << "\n\n";
-    // std::cout << "Unary to mixed=" << st.unary_to_mixed_nodes << "\n\n";
-    // std::cout << "Unary to leaf=" << st.unary_to_leaf_nodes << "\n\n";
-    std::cout << "leaf=" << st.leaf_nodes << "\n\n";
-    // std::cout << "fullblock=" << st.fullblock_nodes << "\n\n";
-    // std::cout << "internal nodes=" << st.internal_nodes << "\n\n";
+    std::cout << "Bits per point (bpp) = " << st.bpp << "\n\n";
 
     std::cout << "Build completed.\n";
 
+    //Optional quick membership test:
     // std::vector<Point> queries = {
-    //     {4,749290},
+    //     {4, 749290},
     // };
-
+    
     // for (const auto& q : queries) {
     //     std::cout << "Query (" << q.x << "," << q.y << "): "
-    //             << (qt.membership(q) ? "FOUND" : "NOT FOUND") << "\n";
+    //               << (qt.membership(q) ? "FOUND" : "NOT FOUND") << "\n";
     // }
 
     return 0;

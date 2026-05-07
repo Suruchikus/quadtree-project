@@ -3,65 +3,6 @@
 
 
 // Rank/Select Support functions
-// uint64_t MXQuadtreeBits::rank1_T(uint64_t bit_pos) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < bit_pos && i < T_len_; i++) {
-//         cnt += get_bit(T_, i);
-//     }
-//     return cnt;
-// }
-
-// uint64_t MXQuadtreeBits::rank1_EX(uint64_t bit_pos) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < bit_pos && i < EX_len_; i++) {
-//         cnt += get_bit(EX_, i);
-//     }
-//     return cnt;
-// }
-
-// uint64_t MXQuadtreeBits::rank1_UM(uint64_t bit_pos) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < bit_pos && i < UM_len_; i++) {
-//         cnt += get_bit(UM_, i);
-//     }
-//     return cnt;
-// }
-
-// uint64_t MXQuadtreeBits::rank1_UL(uint64_t bit_pos) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < bit_pos && i < UL_len_; i++) {
-//         cnt += get_bit(UL_, i);
-//     }
-//     return cnt;
-// }
-
-// uint64_t MXQuadtreeBits::select1_UML(uint64_t k) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < UML_len_; i++) {
-//         if (get_bit(UML_, i)) {
-//             if (cnt == k) return i;
-//             cnt++;
-//         }
-//     }
-//     return UML_len_;
-// }
-
-// uint64_t MXQuadtreeBits::rank0_UM(uint64_t bit_pos) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < bit_pos && i < UM_len_; i++) {
-//         cnt += (get_bit(UM_, i) == 0ULL);
-//     }
-//     return cnt;
-// }
-
-// uint64_t MXQuadtreeBits::rank0_EX(uint64_t bit_pos) const {
-//     uint64_t cnt = 0;
-//     for (uint64_t i = 0; i < bit_pos && i < EX_len_; i++) {
-//         cnt += (get_bit(EX_, i) == 0ULL);
-//     }
-//     return cnt;
-// }
-
 uint64_t MXQuadtreeBits::rank1_T(uint64_t bit_pos) const {
     return rank_T_.rank1_before(bit_pos);
 }
@@ -70,16 +11,8 @@ uint64_t MXQuadtreeBits::rank1_EX(uint64_t bit_pos) const {
     return rank_EX_.rank1_before(bit_pos);
 }
 
-uint64_t MXQuadtreeBits::rank1_UM(uint64_t bit_pos) const {
-    return rank_UM_.rank1_before(bit_pos);
-}
-
 uint64_t MXQuadtreeBits::rank1_UL(uint64_t bit_pos) const {
     return rank_UL_.rank1_before(bit_pos);
-}
-
-uint64_t MXQuadtreeBits::rank0_UM(uint64_t bit_pos) const {
-    return rank_UM_.rank0_before(bit_pos);
 }
 
 uint64_t MXQuadtreeBits::rank0_EX(uint64_t bit_pos) const {
@@ -241,22 +174,82 @@ uint64_t MXQuadtreeBits::read_bits(const std::vector<uint64_t>& src, uint64_t bi
     return result;
 }
 
+inline uint64_t MXQuadtreeBits::read_T4(uint64_t bit_pos) const {
+    const uint64_t word_idx = bit_pos >> 6;      // bit_pos / 64
+    const uint64_t offset   = bit_pos & 63ULL;   // bit_pos % 64
 
-// Build for the contracted tree
+    uint64_t x = T_[word_idx] >> offset;
+
+    if (offset > 60) {
+        x |= T_[word_idx + 1] << (64 - offset);
+    }
+
+    return x & 15ULL;
+}
+
+inline uint64_t MXQuadtreeBits::read_bit_fast(
+    const std::vector<uint64_t>& bits,
+    uint64_t pos
+) const {
+    return (bits[pos >> 6] >> (pos & 63ULL)) & 1ULL;
+}
+
+inline uint64_t MXQuadtreeBits::read_2_fast(
+    const std::vector<uint64_t>& bits,
+    uint64_t pos
+) const {
+    const uint64_t word_idx = pos >> 6;
+    const uint64_t offset = pos & 63ULL;
+
+    uint64_t x = bits[word_idx] >> offset;
+
+    if (offset > 62) {
+        x |= bits[word_idx + 1] << (64 - offset);
+    }
+
+    return x & 3ULL;
+}
+
+inline uint64_t MXQuadtreeBits::uld_offset_for(
+    uint64_t uleaf_index,
+    int child_depth
+) const {
+    uint64_t dir_start = 0;
+    uint64_t before_this_depth = 0;
+
+    for (int d = 0; d < child_depth; d++) {
+        const uint64_t cnt = uleaf_count_by_depth_[d];
+        dir_start += cnt * (uint64_t)(params_.D - d) * 2ULL;
+        before_this_depth += cnt;
+    }
+
+    const uint64_t local_idx = uleaf_index - before_this_depth;
+    const uint64_t rem_len = (uint64_t)(params_.D - child_depth);
+
+    return dir_start + local_idx * rem_len * 2ULL;
+}
+
 void MXQuadtreeBits::build_bfs_contracted() {
     T_.clear();
     EX_.clear();
     UL_.clear();
-    UM_.clear();
-    UML_.clear();
-    UMD_.clear();
     ULD_.clear();
-    ULL_.clear();
+    UR_.clear();
+    URL_.clear();
+    URP_.clear();
 
-    uint64_t x=0;
+    T_len_ = 0;
+    EX_len_ = 0;
+    UL_len_ = 0;
+    ULD_len_ = 0;
+    UR_len_ = 0;
+    URL_len_ = 0;
+    URP_len_ = 0;
 
-    T_len_ = EX_len_ = UL_len_ = ULD_len_ = ULL_len_ = UM_len_ = UML_len_ = UMD_len_ = 0;
+    uleaf_count_by_depth_.assign(params_.D + 1, 0);
 
+    root_is_fullblock_ = false;
+    root_is_unitleaf_ = false;
 
     if (points_.empty()) return;
 
@@ -269,34 +262,35 @@ void MXQuadtreeBits::build_bfs_contracted() {
 
         stats_.total_nodes = 1;
 
-        if (ra.is_fullblock) {
-            stats_.fullblock_nodes = 1;
-        }
-        if (ra.is_unit_leaf) {
-            stats_.leaf_nodes = 1;
-        }
+        if (ra.is_fullblock) stats_.fullblock_nodes = 1;
+        if (ra.is_unit_leaf) stats_.leaf_nodes = 1;
+
         return;
     }
 
     std::vector<Node> curr;
     curr.push_back(std::move(root));
 
-    int bfs_level = 0;
+    std::vector<std::vector<Node>> delayed(params_.D + 1);
 
-    while (!curr.empty()) {
+    int curr_depth = 0;
+
+    while (!curr.empty() || curr_depth <= params_.D) {
+        if (curr.empty()) {
+            curr_depth++;
+
+            if (curr_depth > params_.D) break;
+
+            curr.swap(delayed[curr_depth]);
+            continue;
+        }
+
         std::vector<Node> next;
 
         for (const Node& node : curr) {
             NodeAnalysis a = analyze_node(node.r, node.depth, node.ids);
 
-            uint64_t mask_to_write = 0;
-            if (a.is_fullblock) {
-                mask_to_write = 0b1111ULL;
-            } else {
-                mask_to_write = (uint64_t)a.childMask;
-            }
-
-            push_bits(T_, T_len_, mask_to_write, 4);
+            push_bits(T_, T_len_, (uint64_t)a.childMask, 4);
             stats_.internal_nodes++;
 
             for (int i = 0; i < 4; i++) {
@@ -305,126 +299,97 @@ void MXQuadtreeBits::build_bfs_contracted() {
                 Node child = make_child(a, node, i);
                 NodeAnalysis ca = analyze_node(child.r, child.depth, child.ids);
 
-                const bool is_unary = (ca.expandable && ca.nonempty_children == 1);
+                if (child.depth == params_.D) {
+                    stats_.leaf_nodes++;
+                    continue;
+                }
 
-                // if (is_unary) {
-                //     UnarySkipResult sk = follow_unary_chain(child);
+                const bool is_unary =
+                    ca.expandable && ca.nonempty_children == 1;
 
-                //     if (sk.endpoint_analysis.is_fullblock) {
-                //         //Unary to Fullblock but we process it as unary to mixed leaf, EX=0, UM=0
-                //         push_bits(EX_, EX_len_, 0ULL, 1);
-                //         push_bits(UM_, UM_len_, 0ULL, 1);
-
-                //         for (size_t j = 0; j < sk.dirs.size(); j++) {
-                //             push_bits(UMD_, UMD_len_, (uint64_t)(sk.dirs[j] & 3u), 2);
-                //             push_bits(UML_, UML_len_, (j + 1 == sk.dirs.size()) ? 1ULL : 0ULL, 1);
-                //         }
-                //         stats_.unary_to_mixed_nodes++;
-                //         next.push_back(std::move(sk.endpoint));
-
-                //     } else if (sk.endpoint_analysis.is_unit_leaf) {
-                //         // unary-to-leaf which means EX=1 and UL=1
-                //         push_bits(EX_, EX_len_, 1ULL, 1);
-                //         push_bits(UL_, UL_len_, 1ULL, 1);
-
-                //         const uint64_t real_len = (uint64_t)sk.dirs.size();
-                //         const uint64_t uniform_len = (uint64_t)(params_.D - (bfs_level + 1));
-
-                //         if(real_len<uniform_len){
-                //             x++;
-                //         }
-
-                //         for (size_t j = 0; j < sk.dirs.size(); j++) {
-                //             push_bits(ULD_, ULD_len_, (uint64_t)(sk.dirs[j] & 3u), 2);
-                //             push_bits(ULL_, ULL_len_, (j + 1 == sk.dirs.size()) ? 1ULL : 0ULL, 1);
-                //         }
-
-                //         stats_.unary_to_leaf_nodes++;
-
-                //     } else {
-                //         // Unary to Mixed, EX=0 and UM=0
-                //         push_bits(EX_, EX_len_, 0ULL, 1);
-                //         push_bits(UM_, UM_len_, 0ULL, 1);
-
-                //         for (size_t j = 0; j < sk.dirs.size(); j++) {
-                //             push_bits(UMD_, UMD_len_, (uint64_t)(sk.dirs[j] & 3u), 2);
-                //             push_bits(UML_, UML_len_, (j + 1 == sk.dirs.size()) ? 1ULL : 0ULL, 1);
-                //         }
-
-                //         stats_.unary_to_mixed_nodes++;
-                //         next.push_back(std::move(sk.endpoint));
-                //     }
-                // }
                 if (is_unary) {
                     UnarySkipResult sk = follow_unary_chain(child);
 
                     if (sk.endpoint_analysis.is_unit_leaf) {
-                        // unary-to-leaf: keep compressed
                         push_bits(EX_, EX_len_, 1ULL, 1);
                         push_bits(UL_, UL_len_, 1ULL, 1);
 
-                        for (size_t j = 0; j < sk.dirs.size(); j++) {
-                            push_bits(ULD_, ULD_len_, (uint64_t)(sk.dirs[j] & 3u), 2);
-                            push_bits(ULL_, ULL_len_, (j + 1 == sk.dirs.size()) ? 1ULL : 0ULL, 1);
-                        }
+                        const uint64_t rem_len =
+                            (uint64_t)(params_.D - child.depth);
+
+                        const uint64_t local_x =
+                            (uint64_t)(sk.endpoint.r.xmin - child.r.xmin);
+
+                        const uint64_t local_y =
+                            (uint64_t)(sk.endpoint.r.ymin - child.r.ymin);
+
+                        push_bits(ULD_, ULD_len_, local_x, (int)rem_len);
+                        push_bits(ULD_, ULD_len_, local_y, (int)rem_len);
+
+                        uleaf_count_by_depth_[child.depth]++;
 
                         stats_.unary_to_leaf_nodes++;
-
-                    } else {
-                        // unary-to-mixed or unary-to-fullblock:
-                        // DO NOT skip. Store the immediate child as normal explicit node.
-                        push_bits(EX_, EX_len_, 0ULL, 1);
-
-                        next.push_back(std::move(child));
-                        stats_.mixed_internal++;
                     }
-                } else {
-                    //Non Unary cases
+                    else {
+                        push_bits(EX_, EX_len_, 0ULL, 1);
+                        push_bits(UR_, UR_len_, 1ULL, 1);
+
+                        push_bits(URL_, URL_len_, (uint64_t)sk.L, URL_WIDTH);
+
+                        for (uint8_t dir : sk.dirs) {
+                            push_bits(URP_, URP_len_, (uint64_t)dir, 2);
+                        }
+
+                        delayed[sk.endpoint.depth].push_back(std::move(sk.endpoint));
+
+                        stats_.unary_to_regular_nodes++;
+                    }
+                }
+                else {
                     if (ca.is_fullblock) {
-                        // EX=1 => full block
                         push_bits(EX_, EX_len_, 1ULL, 1);
                         push_bits(UL_, UL_len_, 0ULL, 1);
 
                         stats_.fullblock_nodes++;
-
-                    } else if (child.depth == params_.D) {
-                        // EX=1 => direct leaf at depth D
-                        push_bits(EX_, EX_len_, 1ULL, 1);
-                        push_bits(UL_, UL_len_, 0ULL, 1);
-
-                        stats_.leaf_nodes++;
-
-                    } else {
-                        // EX=0 => normal mixed continue
+                    }
+                    else {
                         push_bits(EX_, EX_len_, 0ULL, 1);
-                        //push_bits(UM_, UM_len_, 1ULL, 1);
+                        push_bits(UR_, UR_len_, 0ULL, 1);
 
                         next.push_back(std::move(child));
-                        stats_.mixed_internal++;
                     }
                 }
             }
         }
 
+        curr_depth++;
+
+        if (curr_depth <= params_.D) {
+            for (Node& delayed_node : delayed[curr_depth]) {
+                next.push_back(std::move(delayed_node));
+            }
+
+            delayed[curr_depth].clear();
+        }
+
         curr.swap(next);
-        bfs_level++;
     }
 
-    rank_T_.build(T_, T_len_, 8);    // 8 words = 512 bits
+    rank_T_.build(T_, T_len_, 8);
     rank_EX_.build(EX_, EX_len_, 8);
-    //rank_UM_.build(UM_, UM_len_, 8);
     rank_UL_.build(UL_, UL_len_, 8);
+    rank_UR_.build(UR_, UR_len_, 8);
 
     stats_.rank_T_bits  = rank_T_.space_in_bits();
     stats_.rank_EX_bits = rank_EX_.space_in_bits();
-    //stats_.rank_UM_bits = rank_UM_.space_in_bits();
     stats_.rank_UL_bits = rank_UL_.space_in_bits();
+    stats_.rank_UR_bits = rank_UR_.space_in_bits();
 
     stats_.rank_bits =
         stats_.rank_T_bits +
         stats_.rank_EX_bits +
-        //stats_.rank_UM_bits +
-        stats_.rank_UL_bits;
+        stats_.rank_UL_bits +
+        stats_.rank_UR_bits;
 
     uint64_t ones_T = 0;
     for (uint64_t i = 0; i < T_len_; i++) {
@@ -435,28 +400,29 @@ void MXQuadtreeBits::build_bfs_contracted() {
 
     stats_.T_bits = T_len_;
     stats_.EX_bits = EX_len_;
-    stats_.UM_bits = UM_len_;
     stats_.UL_bits = UL_len_;
-    stats_.UML_bits = UML_len_;
-    stats_.UMD_bits = UMD_len_;
     stats_.ULD_bits = ULD_len_;
-    stats_.ULL_bits = ULL_len_;
+    stats_.UR_bits = UR_len_;
+    stats_.URL_bits = URL_len_;
+    stats_.URP_bits = URP_len_;
 
-    // const uint64_t total_bits =
-    //     T_len_ + EX_len_ + UM_len_ +
-    //     UL_len_ + ULL_len_ + stats_.ULD_bits +
-    //     UML_len_ + UMD_len_ + stats_.rank_bits;
+    const uint64_t uleaf_count_bits =
+        (uint64_t)uleaf_count_by_depth_.size() * 64ULL;
 
-        const uint64_t total_bits =
-        T_len_ + EX_len_ +
-        UL_len_ + ULD_len_ +
-         stats_.rank_bits;
+    const uint64_t total_bits =
+        T_len_ +
+        EX_len_ +
+        UL_len_ +
+        ULD_len_ +
+        UR_len_ +
+        URL_len_ +
+        URP_len_ +
+        uleaf_count_bits +
+        stats_.rank_bits;
 
-    stats_.bpp = (stats_.points == 0)
+    stats_.bpp = stats_.points == 0
         ? 0.0
         : (double)total_bits / (double)stats_.points;
-    std::cout << "leaf of mix=" << x << "\n\n";
-
 }
 
 // Unary Skipping
@@ -512,168 +478,91 @@ MXQuadtreeBits::follow_unary_chain(const Node& start) const {
 }
 
 // Membership Queries
-bool MXQuadtreeBits::membership(const Point& q) const {
-    // 1. Outside Grid
-    if (q.x < region_.xmin || q.x >= region_.xmax ||
-        q.y < region_.ymin || q.y >= region_.ymax) {
-        return false;
-    }
+// bool MXQuadtreeBits::membership(const Point& q) const {
+//     if (q.x < region_.xmin || q.x >= region_.xmax ||
+//         q.y < region_.ymin || q.y >= region_.ymax) {
+//         return false;
+//     }
 
-    // 2. Empty Grid
-    if (points_.empty()) {
-        return false;
-    }
+//     if (points_.empty()) return false;
+//     if (root_is_fullblock_) return true;
+//     if (root_is_unitleaf_) return true;
 
-    // 3. Root special cases
-    if (root_is_fullblock_) {
-        return true;
-    }
+//     int xmin = region_.xmin;
+//     int xmax = region_.xmax;
+//     int ymin = region_.ymin;
+//     int ymax = region_.ymax;
 
-    if (root_is_unitleaf_) {
-        return true;
-    }
+//     int depth = 0;
+//     uint64_t t_pos = 0;
 
-    // 4. Start navigation at the root explicit node
-    Rect curr_r = region_;
-    int curr_depth = 0;
+//     while (true) {
+//         const uint64_t mask = read_T4(t_pos);
 
-    // Root is the first explicit node, so its 4-bit block starts at bit 0 in T.
-    uint64_t curr_t_pos = 0;
+//         const int xm = (xmin + xmax) >> 1;
+//         const int ym = (ymin + ymax) >> 1;
 
-    while (true) {
-        // Read current node's 4-bit child mask from T
-        const uint64_t childMask = read_bits(T_, curr_t_pos, 4);
+//         const bool east = q.x >= xm;
+//         const bool north = q.y >= ym;
 
-        // Find which child quadrant contains q
-        const int xm = midpoint(curr_r.xmin, curr_r.xmax);
-        const int ym = midpoint(curr_r.ymin, curr_r.ymax);
-        const int child_idx = quadrant_index(q, xm, ym);
+//         const uint64_t child =
+//             east ? (north ? 3ULL : 1ULL)
+//                  : (north ? 2ULL : 0ULL);
 
-        // If that child bit is 0, query point is absent
-        if (((childMask >> child_idx) & 1ULL) == 0ULL) {
-            return false;
-        }
+//         if (((mask >> child) & 1ULL) == 0ULL) {
+//             return false;
+//         }
 
-        // Map this chosen 1-child to its EX position.
-        // EX is aligned with the 1-bits of T.
-        const uint64_t child_t_bit_pos = curr_t_pos + (uint64_t)child_idx;
-        const uint64_t ex_pos = rank1_T(child_t_bit_pos);
+//         if (east) xmin = xm;
+//         else xmax = xm;
 
-        // Read EX for this child
-        const uint64_t ex_bit = get_bit(EX_, ex_pos);
+//         if (north) ymin = ym;
+//         else ymax = ym;
 
-        if (ex_bit == 1ULL) {
-            // This child is a stopping case.
-            // UL is aligned with EX=1 entries.
-            const uint64_t ul_pos = rank1_EX(ex_pos);
-            const uint64_t ul_bit = get_bit(UL_, ul_pos);
+//         const int child_depth = depth + 1;
 
-            Rect child_r = child_rect(curr_r, child_idx);
-            const int child_depth = curr_depth + 1;
+//         if (child_depth == params_.D) {
+//             return true;
+//         }
 
-            if (ul_bit == 0ULL) {
-                // direct fullblock OR direct leaf
-                return true;
-            } else {
-                // unary-to-leaf
+//         const uint64_t child_t_bit_pos = t_pos + child;
+//         const uint64_t ex_pos = rank1_T(child_t_bit_pos);
+//         const uint64_t ex_bit = read_bit_fast(EX_, ex_pos);
+//         const uint64_t ex_rank1 = rank1_EX(ex_pos);
 
-                const uint64_t prev_uleaf = rank1_UL(ul_pos);
+//         if (ex_bit == 0ULL) {
+//             const uint64_t zeros_before_ex = ex_pos - ex_rank1;
+//             const uint64_t next_node_idx = 1ULL + zeros_before_ex;
 
-                // find start/end direction index in ULD/ULL
-                uint64_t dir_start = 0;
-                uint64_t seen_paths = 0;
+//             t_pos = 4ULL * next_node_idx;
+//             depth = child_depth;
+//             continue;
+//         }
 
-                while (seen_paths < prev_uleaf && dir_start < ULL_len_) {
-                    if (get_bit(ULL_, dir_start) == 1ULL) {
-                        seen_paths++;
-                    }
-                    dir_start++;
-                }
+//         const uint64_t ul_pos = ex_rank1;
+//         const uint64_t ul_bit = read_bit_fast(UL_, ul_pos);
 
-                uint64_t dir_end = dir_start;
-                while (dir_end < ULL_len_ && get_bit(ULL_, dir_end) == 0ULL) {
-                    dir_end++;
-                }
-                if (dir_end < ULL_len_) dir_end++;
+//         if (ul_bit == 0ULL) {
+//             return true;
+//         }
 
-                Rect r = child_rect(curr_r, child_idx);
+//         const uint64_t uleaf_index = rank1_UL(ul_pos);
+//         const uint64_t rem_len = (uint64_t)(params_.D - child_depth);
+//         const uint64_t dir_start = uld_offset_for(uleaf_index, child_depth);
 
-                for (uint64_t j = dir_start; j < dir_end; j++) {
-                    const uint64_t got = read_bits(ULD_, 2 * j, 2);
+//         const uint64_t stored_x =
+//             read_bits(ULD_, dir_start, (int)rem_len);
 
-                    const int xm2 = midpoint(r.xmin, r.xmax);
-                    const int ym2 = midpoint(r.ymin, r.ymax);
-                    const uint64_t want = (uint64_t)quadrant_index(q, xm2, ym2);
+//         const uint64_t stored_y =
+//             read_bits(ULD_, dir_start + rem_len, (int)rem_len);
 
-                    if (want != got) {
-                        return false;
-                    }
+//         const uint64_t query_x =
+//             (uint64_t)(q.x - xmin);
 
-                    r = child_rect(r, (int)got);
-                }
+//         const uint64_t query_y =
+//             (uint64_t)(q.y - ymin);
 
-                return true;
-            }
-        } else {
-            // continuation case: use UM aligned with EX=0
-            const uint64_t um_pos = rank0_EX(ex_pos);
-            const uint64_t um_bit = get_bit(UM_, um_pos);
+//         return query_x == stored_x && query_y == stored_y;
 
-            Rect child_r = child_rect(curr_r, child_idx);
-            const int child_depth = curr_depth + 1;
-
-            if (um_bit == 1ULL) {
-                const uint64_t next_node_idx = 1 + ex_pos - rank1_EX(ex_pos);
-                curr_t_pos = 4 * next_node_idx;
-                curr_r = child_r;
-                curr_depth = child_depth;
-                continue;
-            } else {
-                // unary continuation
-                const uint64_t prev_unary = rank0_UM(um_pos);
-
-                // find start/end direction index in UMD/UML
-                uint64_t dir_start = 0;
-                uint64_t seen_paths = 0;
-
-                while (seen_paths < prev_unary && dir_start < UML_len_) {
-                    if (get_bit(UML_, dir_start) == 1ULL) {
-                        seen_paths++;
-                    }
-                    dir_start++;
-                }
-
-                uint64_t dir_end = dir_start;
-                while (dir_end < UML_len_ && get_bit(UML_, dir_end) == 0ULL) {
-                    dir_end++;
-                }
-                // include the final 1 bit
-                if (dir_end < UML_len_) dir_end++;
-
-                Rect r = child_r;
-                for (uint64_t j = dir_start; j < dir_end; j++) {
-                    const uint64_t got = read_bits(UMD_, 2 * j, 2);    
-
-                    const int xm2 = midpoint(r.xmin, r.xmax);
-                    const int ym2 = midpoint(r.ymin, r.ymax);
-                    const uint64_t want = (uint64_t)quadrant_index(q, xm2, ym2);
-
-                    if (want != got) {
-                        return false;
-                    }
-
-                    r = child_rect(r, (int)got);
-                }
-
-                // after unary path, land at endpoint explicit node
-                const uint64_t next_node_idx = 1 + ex_pos - rank1_EX(ex_pos);
-                curr_t_pos = 4 * next_node_idx;
-                curr_r = r;
-                curr_depth = child_depth + (int)(dir_end - dir_start);
-                continue;
-            }
-        }   
-    }
-
-    return false;
-}
+//     }
+// }

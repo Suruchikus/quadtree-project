@@ -126,70 +126,70 @@ int main(int argc, char** argv) {
 
     std::cout << "Build completed.\n";
 
-//     const uint64_t Q = 100000;
+    const uint64_t Q = 100000;
 
-//     MembershipQueryGenerator qgen(region, pts, 1);
+    MembershipQueryGenerator qgen(region, pts, 1);
 
-//     QuerySet filled_qs = qgen.random_filled(Q);
-//     QuerySet empty_qs = qgen.random_empty(Q);
-//     QuerySet isolated_qs = qgen.isolated_filled(Q);
+    QuerySet filled_qs = qgen.random_filled(Q);
+    QuerySet empty_qs = qgen.random_empty(Q);
+    QuerySet isolated_qs = qgen.isolated_filled(Q);
 
-//    const uint64_t repeats = 100;
+   const uint64_t repeats = 100;
 
-//     uint64_t found_filled = 0;
-//     uint64_t found_empty = 0;
+    uint64_t found_filled = 0;
+    uint64_t found_empty = 0;
 
-//     std::cout << "\nRunning membership tests...\n";
+    std::cout << "\nRunning membership tests...\n";
 
-//     // Filled queries
-//     double filled_ms = run_membership_test(
-//         qt,
-//         filled_qs.queries,
-//         repeats,
-//         found_filled
-//     );
+    // Filled queries
+    double filled_ms = run_membership_test(
+        qt,
+        filled_qs.queries,
+        repeats,
+        found_filled
+    );
 
-//     // Empty queries
-//     double empty_ms = run_membership_test(
-//         qt,
-//         empty_qs.queries,
-//         repeats,
-//         found_empty
-//     );
+    // Empty queries
+    double empty_ms = run_membership_test(
+        qt,
+        empty_qs.queries,
+        repeats,
+        found_empty
+    );
 
-//     uint64_t found_isolated = 0;
+    uint64_t found_isolated = 0;
 
-//     double isolated_ms = run_membership_test(
-//         qt,
-//         isolated_qs.queries,
-//         repeats,
-//         found_isolated
-//     );
+    double isolated_ms = run_membership_test(
+        qt,
+        isolated_qs.queries,
+        repeats,
+        found_isolated
+    );
 
-//     double isolated_us_per_query =
-//         (isolated_ms * 1000.0) / (double)isolated_qs.queries.size();
+    double isolated_us_per_query =
+        (isolated_ms * 1000.0) / (double)isolated_qs.queries.size();
 
-//     // Convert to microseconds per query
-//     double filled_us_per_query =
-//         (filled_ms * 1000.0) / (double)filled_qs.queries.size();
+    // Convert to microseconds per query
+    double filled_us_per_query =
+        (filled_ms * 1000.0) / (double)filled_qs.queries.size();
 
-//     double empty_us_per_query =
-//         (empty_ms * 1000.0) / (double)empty_qs.queries.size();
+    double empty_us_per_query =
+        (empty_ms * 1000.0) / (double)empty_qs.queries.size();
 
-//     std::cout << "\nMembership Results\n";
-//     std::cout << "------------------\n";
+    std::cout << "\nMembership Results\n";
+    std::cout << "------------------\n";
 
-//     std::cout << "Filled queries:\n";
-//     std::cout << "  avg time = " << filled_us_per_query << " us/query\n";
-//     std::cout << "  found    = " << found_filled << "\n";
+    std::cout << "Filled queries:\n";
+    std::cout << "  avg time = " << filled_us_per_query << " us/query\n";
+    std::cout << "  found    = " << found_filled << "\n";
 
-//     std::cout << "Empty queries:\n";
-//     std::cout << "  avg time = " << empty_us_per_query << " us/query\n";
-//     std::cout << "  found    = " << found_empty << "\n";
+    std::cout << "Empty queries:\n";
+    std::cout << "  avg time = " << empty_us_per_query << " us/query\n";
+    std::cout << "  found    = " << found_empty << "\n";
     
-//     std::cout << "Isolated filled queries:\n";
-//     std::cout << "  avg time = " << isolated_us_per_query << " us/query\n";
-//     std::cout << "  found    = " << found_isolated << "\n";
+    std::cout << "Isolated filled queries:\n";
+    std::cout << "  avg time = " << isolated_us_per_query << " us/query\n";
+    std::cout << "  found    = " << found_isolated << "\n";
 
     return 0;
 }
